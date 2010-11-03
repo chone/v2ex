@@ -28,7 +28,7 @@
                 {{ home }}
                 {% if member %}
                 <script type="text/javascript">
-                blocked = [{{ blocked }}];
+                var blocked = [{{ blocked }}];
                 $("#topics_index").children('.cell').each( function(index) {
                     for (i in blocked) {
                         if ($(this).hasClass('from_' + blocked[i])) {

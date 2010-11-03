@@ -15,12 +15,12 @@
             </td>
     </table>
     <script>
-    replies_keys[({{ forloop.counter }} - 1)] = '{{ reply.key }}';
-    replies_ids[({{ forloop.counter }} - 1)] = '{{ reply.num }}';
+    replies_keys.push('{{ reply.key }}');
+    replies_ids.push('{{ reply.num }}');
     {% if reply.parent %}
-    replies_parents[({{ forloop.counter }} - 1)] = 1;
+    replies_parents.push(1);
     {% else %}
-    replies_parents[({{ forloop.counter }} - 1)] = 0;
+    replies_parents.push(0);
     {% endif %}
     </script>
 </div>
