@@ -183,8 +183,9 @@ a.dark:hover {
 }
 
 #Content {
-	margin: 0px 282px 0px 0px;
 	padding: 10px;
+	float: left;
+	width: 658px;
 }
 
 #Bottom {
@@ -323,6 +324,7 @@ td.avatar_mini {
 
 .snow {
 	color: rgba(0, 0, 0, 0.15);
+	*color: #d9d9ea;
 }
 
 .chevron {
