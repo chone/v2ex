@@ -1,4 +1,4 @@
-SYSTEM_VERSION = '2.3.15'
+SYSTEM_VERSION = '2.5.0-dev'
 
 import datetime
 import hashlib
@@ -17,6 +17,7 @@ class Member(db.Model):
     email = db.StringProperty(required=False, indexed=True)
     email_verified = db.IntegerProperty(required=False, indexed=True, default=0)
     website = db.StringProperty(required=False, default='')
+    psn = db.StringProperty(required=False)
     twitter = db.StringProperty(required=False, default='')
     twitter_oauth = db.IntegerProperty(required=False, default=0)
     twitter_oauth_key = db.StringProperty(required=False)
@@ -45,6 +46,64 @@ class Member(db.Model):
     last_signin = db.DateTimeProperty()
     blocked = db.TextProperty(required=False, default='')
     l10n = db.StringProperty(default='en')
+    favorited_nodes = db.IntegerProperty(required=True, default=0)
+    favorited_topics = db.IntegerProperty(required=True, default=0)
+    favorited_members = db.IntegerProperty(required=True, default=0)
+    followers_count = db.IntegerProperty(required=True, default=0)
+    level = db.IntegerProperty(required=True, default=1000)
+    notifications = db.IntegerProperty(required=True, default=0)
+    notification_position = db.IntegerProperty(required=True, default=0)
+    private_token = db.StringProperty(required=False, indexed=True)
+    ua = db.StringProperty(required=False, default='')
+    newbie = db.IntegerProperty(required=True, default=0)
+    noob = db.IntegerProperty(required=True, default=0)
+    show_home_top = db.IntegerProperty(required=True, default=1)
+    show_quick_post = db.IntegerProperty(required=True, default=0)
+    
+    def hasFavorited(self, something):
+        if type(something).__name__ == 'Node':
+            n = 'r/n' + str(something.num) + '/m' + str(self.num)
+            r = memcache.get(n)
+            if r:
+                return r
+            else:
+                q = db.GqlQuery("SELECT * FROM NodeBookmark WHERE node =:1 AND member = :2", something, self)
+                if q.count() > 0:
+                    memcache.set(n, True, 86400 * 14)
+                    return True
+                else:
+                    memcache.set(n, False, 86400 * 14)
+                    return False
+        else:
+            if type(something).__name__ == 'Topic':
+                n = 'r/t' + str(something.num) + '/m' + str(self.num)
+                r = memcache.get(n)
+                if r:
+                    return r
+                else:
+                    q = db.GqlQuery("SELECT * FROM TopicBookmark WHERE topic =:1 AND member = :2", something, self)
+                    if q.count() > 0:
+                        memcache.set(n, True, 86400 * 14)
+                        return True
+                    else:
+                        memcache.set(n, False, 86400 * 14)
+                        return False
+            else:
+                if type(something).__name__ == 'Member':
+                    n = 'r/m' + str(something.num) + '/m' + str(self.num)
+                    r = memcache.get(n)
+                    if r:
+                        return r
+                    else:
+                        q = db.GqlQuery("SELECT * FROM MemberBookmark WHERE one =:1 AND member_num = :2", something, self.num)
+                        if q.count() > 0:
+                            memcache.set(n, True, 86400 * 14)
+                            return True
+                        else:
+                            memcache.set(n, False, 86400 * 14)
+                            return False
+                else:
+                    return False
     
 class Counter(db.Model):
     name = db.StringProperty(required=False, indexed=True)
@@ -72,8 +131,12 @@ class Node(db.Model):
     header = db.TextProperty(required=False)
     footer = db.TextProperty(required=False)
     sidebar = db.TextProperty(required=False)
+    sidebar_ads = db.TextProperty(required=False)
     category = db.StringProperty(required=False, indexed=True)
     topics = db.IntegerProperty(default=0)
+    avatar_large_url = db.StringProperty(required=False, indexed=False)
+    avatar_normal_url = db.StringProperty(required=False, indexed=False)
+    avatar_mini_url = db.StringProperty(required=False, indexed=False)
     created = db.DateTimeProperty(auto_now_add=True)
     last_modified = db.DateTimeProperty(auto_now=True)
     
@@ -88,14 +151,17 @@ class Topic(db.Model):
     title = db.StringProperty(required=False, indexed=True)
     content = db.TextProperty(required=False)
     content_rendered = db.TextProperty(required=False)
-    content_length = db.IntegerProperty(default=0)
+    content_length = db.IntegerProperty(required=True, default=0)
+    has_content = db.BooleanProperty(required=True, default=True)
     hits = db.IntegerProperty(default=0)
+    stars = db.IntegerProperty(required=True, default=0)
     replies = db.IntegerProperty(default=0)
     created_by = db.StringProperty(required=False, indexed=True)
     last_reply_by = db.StringProperty(required=False, indexed=True)
     source = db.StringProperty(required=False, indexed=True)
     type = db.StringProperty(required=False, indexed=True)
     type_color = db.StringProperty(required=False)
+    explicit = db.IntegerProperty(required=True, default=0)
     created = db.DateTimeProperty(auto_now_add=True)
     last_modified = db.DateTimeProperty(auto_now=True)
     last_touched = db.DateTimeProperty()
@@ -111,6 +177,7 @@ class Reply(db.Model):
     created_by = db.StringProperty(required=False, indexed=True)
     created = db.DateTimeProperty(auto_now_add=True)
     last_modified = db.DateTimeProperty(auto_now=True)
+    highlighted = db.IntegerProperty(required=True, default=0)
     
 class Avatar(db.Model):
     num = db.IntegerProperty(indexed=True)
@@ -169,9 +236,15 @@ class Site(db.Model):
     domain = db.StringProperty(required=False, indexed=False)
     analytics = db.StringProperty(required=False, indexed=False)
     home_categories = db.TextProperty(required=False, indexed=False)
+    meta = db.TextProperty(required=False, default='')
+    home_top = db.TextProperty(required=False, default='')
+    theme = db.StringProperty(required=False, default='default')
     l10n = db.StringProperty(default='en')
     use_topic_types = db.BooleanProperty(default=False)
     topic_types = db.TextProperty(default='')
+    topic_view_level = db.IntegerProperty(required=True, default=-1)
+    topic_create_level = db.IntegerProperty(required=True, default=1000)
+    topic_reply_level = db.IntegerProperty(required=True, default=1000)
     
 class Minisite(db.Model):
     num = db.IntegerProperty(required=False, indexed=True)
@@ -190,6 +263,36 @@ class Page(db.Model):
     content = db.TextProperty(default='')
     content_rendered = db.TextProperty(default='')
     content_type = db.StringProperty(default='text/html')
-    weight = db.IntegerProperty(default=0)
+    weight = db.IntegerProperty(required=True, default=0)
+    mode = db.IntegerProperty(required=True, default=0)
+    hits = db.IntegerProperty(required=True, default=0)
     created = db.DateTimeProperty(auto_now_add=True)
     last_modified = db.DateTimeProperty(auto_now=True)
+
+class NodeBookmark(db.Model):
+    node = db.ReferenceProperty(Node, indexed=True)
+    member = db.ReferenceProperty(Member, indexed=True)
+    created = db.DateTimeProperty(auto_now_add=True)
+
+class TopicBookmark(db.Model):
+    topic = db.ReferenceProperty(Topic, indexed=True)
+    member = db.ReferenceProperty(Member, indexed=True)
+    created = db.DateTimeProperty(auto_now_add=True)
+
+class MemberBookmark(db.Model):
+    one = db.ReferenceProperty(Member, indexed=True)
+    member_num = db.IntegerProperty(indexed=True)
+    created = db.DateTimeProperty(auto_now_add=True)
+
+# Notification type: mention_topic, mention_reply, reply
+class Notification(db.Model):
+    num = db.IntegerProperty(required=False, indexed=True)
+    member = db.ReferenceProperty(Member, indexed=True)
+    for_member_num = db.IntegerProperty(required=False, indexed=True)
+    type = db.StringProperty(required=False, indexed=True)
+    payload = db.TextProperty(required=False, default='')
+    label1 = db.StringProperty(required=False, indexed=False)
+    link1 = db.StringProperty(required=False, indexed=False)
+    label2 = db.StringProperty(required=False, indexed=False)
+    link2 = db.StringProperty(required=False, indexed=False)
+    created = db.DateTimeProperty(auto_now_add=True)

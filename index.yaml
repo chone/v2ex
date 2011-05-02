@@ -15,6 +15,17 @@ indexes:
   - name: email
   - name: num
 
+- kind: Member
+  properties:
+  - name: username_lower
+  - name: num
+
+- kind: MemberBookmark
+  properties:
+  - name: member_num
+  - name: created
+    direction: desc
+
 - kind: Node
   properties:
   - name: __key__
@@ -44,7 +55,19 @@ indexes:
 - kind: Node
   properties:
   - name: section_num
+  - name: last_modified
+    direction: desc
+
+- kind: Node
+  properties:
+  - name: section_num
   - name: topics
+    direction: desc
+
+- kind: NodeBookmark
+  properties:
+  - name: member
+  - name: created
     direction: desc
 
 - kind: Note
@@ -57,6 +80,18 @@ indexes:
   properties:
   - name: member
   - name: last_modified
+    direction: desc
+
+- kind: Notification
+  properties:
+  - name: for_member_num
+  - name: created
+    direction: desc
+
+- kind: Notification
+  properties:
+  - name: for_member_num
+  - name: num
     direction: desc
 
 - kind: Page
@@ -123,11 +158,36 @@ indexes:
 
 - kind: Topic
   properties:
+  - name: member_num
+  - name: node_name
+  - name: created
+    direction: desc
+
+- kind: Topic
+  properties:
   - name: node
   - name: created
 
 - kind: Topic
   properties:
+  - name: node
+  - name: created
+    direction: desc
+
+- kind: Topic
+  properties:
+  - name: node_name
+  - name: created
+    direction: desc
+
+- kind: Topic
+  properties:
   - name: node_num
   - name: last_touched
+    direction: desc
+
+- kind: TopicBookmark
+  properties:
+  - name: member
+  - name: created
     direction: desc

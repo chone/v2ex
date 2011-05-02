@@ -11,6 +11,7 @@ backstage = 'Backstage'
 signin = 'Sign In'
 signup = 'Sign Up'
 signout = 'Sign Out'
+planes = 'Planes'
 
 # Messages shared by forms
 
@@ -36,7 +37,8 @@ existing_member = 'Existing member please <a href="/signin">sign in</a>'
 
 username_empty = 'Please input your username'
 username_too_long = 'Username should not be longer than 32 characters'
-username_invalid = 'Username can only use a-z, A-Z and underscore'
+username_too_short = 'Username should have at least 3 characters'
+username_invalid = 'Username can only use 0-9, a-z, A-Z and underscore'
 username_taken = 'Sorry, this username is taken by other'
 
 # Messages on /signout
@@ -72,6 +74,7 @@ replies = "replies"
 till = "Till"
 sure_to_delete = "Sure to delete?"
 no_pointless = "➥ Please avoid posting pointless replies, it's always great to save everyone's precious time."
+for_good = "All for a better world."
 
 # Messages on /go/
 
@@ -110,6 +113,10 @@ twitter_link_explained = "Link your Twitter account securely via OAuth, then you
 personal_records = "Personal Records"
 blocked = "Blocked"
 updated_every_4_hours = "Updated Every 4 Hours"
+show_home_top = "Show Site Header"
+show_quick_post = "Show Quick Post"
+do_show = "Show"
+do_not_show = "Do Not Show"
 
 # Messages on /member/
 
@@ -119,9 +126,9 @@ recent_participated_topics = 'Recent Participated Topics'
 # Messages on /backstage
 
 site_settings = 'Site Settings'
-site_settings_explained = 'Site name, slogan, description and other details.'
+site_settings_explained = 'Site name, slogan, description and other details. Who can create topic and who can reply.'
 topic_settings = 'Topic Settings'
-topic_settings_explained = 'Configure topic types and who can post, who can reply.'
+topic_settings_explained = 'Configure topic types.'
 sections = 'Sections'
 add_new_section = 'Add New Section'
 minisites = 'Minisites'
@@ -131,6 +138,7 @@ delete_specified_cached_item = 'Delete Specified Cached Item'
 delete_specified_cached_item_explained = 'You can clear specified cached item by entering its name here.'
 mapreduce_explained = 'MapReduce is a very powerful tool for tidying all data, use with caution.'
 latest_joined = 'Latest Joined'
+sure_to_delete_minisite = 'Sure to delete this minisite and all its contents?'
 
 # Messages on /backstage/site
 
@@ -141,6 +149,7 @@ site_description = 'Description'
 site_home_categories = 'Home Categories'
 one_category_per_line = 'One featured category per line'
 site_settings_updated = 'Site settings updated successfully'
+site_theme = 'Theme'
 
 # Messages on /backstage/topic
 

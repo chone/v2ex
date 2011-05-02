@@ -30,6 +30,8 @@ from v2ex.babel.ext.sessions import Session
 
 from v2ex.babel import SYSTEM_VERSION
 
+from v2ex.babel.handlers import BaseHandler
+
 import config
 
 template.register_template_library('v2ex.templatetags.filters')
@@ -53,10 +55,15 @@ class MemberHandler(webapp.RequestHandler):
         one = False
         one = GetMemberByUsername(member_username)
         if one is not False:
+            if one.followers_count is None:
+                one.followers_count = 0
             template_values['one'] = one
             template_values['page_title'] = site.title + u' › ' + one.username
             template_values['canonical'] = 'http://' + site.domain + '/member/' + one.username
         if one is not False:
+            blog = db.GqlQuery("SELECT * FROM Topic WHERE node_name = :1 AND member_num = :2 ORDER BY created DESC LIMIT 1", 'blog', one.num)
+            if blog.count() > 0:
+                template_values['blog'] = blog[0]
             q2 = db.GqlQuery("SELECT * FROM Topic WHERE member_num = :1 ORDER BY created DESC LIMIT 10", one.num)
             template_values['topics'] = q2
             replies = memcache.get('member::' + str(one.num) + '::participated')
@@ -77,8 +84,11 @@ class MemberHandler(webapp.RequestHandler):
             if len(replies) > 0:
                 template_values['replies'] = replies
         template_values['show_block'] = False
+        template_values['show_follow'] = False
+        template_values['favorited'] = False
         if one and member:
             if one.num != member.num:
+                template_values['show_follow'] = True
                 template_values['show_block'] = True
                 try:
                     blocked = pickle.loads(member.blocked.encode('utf-8'))
@@ -88,6 +98,13 @@ class MemberHandler(webapp.RequestHandler):
                     template_values['one_is_blocked'] = True
                 else:
                     template_values['one_is_blocked'] = False
+                if member.hasFavorited(one):
+                    template_values['favorited'] = True
+                else:
+                    template_values['favorited'] = False
+        if 'message' in self.session:
+            template_values['message'] = self.session['message']
+            del self.session['message']
         if one is not False: 
             if browser['ios']:
                 path = os.path.join(os.path.dirname(__file__), 'tpl', 'mobile', 'member_home.html')
@@ -99,10 +116,6 @@ class MemberHandler(webapp.RequestHandler):
             else:
                 path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'member_not_found.html')
         output = template.render(path, template_values)
-        expires_date = datetime.datetime.utcnow() + datetime.timedelta(minutes=2)
-        expires_str = expires_date.strftime("%d %b %Y %H:%M:%S GMT")
-        self.response.headers.add_header("Expires", expires_str)
-        self.response.headers['Cache-Control'] = 'max-age=120, must-revalidate'
         self.response.out.write(output)
         
 class MemberApiHandler(webapp.RequestHandler):
@@ -124,7 +137,6 @@ class MemberApiHandler(webapp.RequestHandler):
             self.response.out.write(output)
         else:
             self.error(404)
-        
 
 class SettingsHandler(webapp.RequestHandler):
     def get(self):
@@ -150,6 +162,9 @@ class SettingsHandler(webapp.RequestHandler):
             template_values['member_twitter'] = member.twitter
             if (member.location == None):
                 member.location = ''
+            if member.psn is None:
+                member.psn = ''
+            template_values['member_psn'] = member.psn
             template_values['member_location'] = member.location
             if (member.tagline == None):
                 member.tagline = ''
@@ -157,7 +172,9 @@ class SettingsHandler(webapp.RequestHandler):
             if (member.bio == None):
                 member.bio = ''
             template_values['member_bio'] = member.bio
-            if (member.l10n == None):
+            template_values['member_show_home_top'] = member.show_home_top
+            template_values['member_show_quick_post'] = member.show_quick_post
+            if member.l10n is None:
                 member.l10n = 'en'
             template_values['member_l10n'] = member.l10n
             s = GetLanguageSelect(member.l10n)
@@ -175,19 +192,6 @@ class SettingsHandler(webapp.RequestHandler):
             except:
                 blocked = []
             template_values['member_stats_blocks'] = len(blocked)
-            member_topics = memcache.get('Member_' + str(member.num) + '_topics_count')
-            if member_topics is None:
-                q = db.GqlQuery("SELECT __key__ FROM Topic WHERE member = :1", member)
-                member_topics = q.count()
-                memcache.set('Member_' + str(member.num) + '_topics_count', member_topics, 3600 * 4)
-            template_values['member_stats_topics'] = member_topics
-            member_replies = memcache.get('Member_' + str(member.num) + '_replies_count')
-            if member_replies is None:
-                replies = Reply.all()
-                replies.filter("member = ", member)
-                member_replies = replies.count()
-                memcache.set('Member_' + str(member.num) + '_replies_count', member_replies, 3600 * 4)
-            template_values['member_stats_replies'] = member_replies
             if browser['ios']:
                 path = os.path.join(os.path.dirname(__file__), 'tpl', 'mobile', 'member_settings.html')
             else:
@@ -198,9 +202,11 @@ class SettingsHandler(webapp.RequestHandler):
             self.redirect('/signin')
         
     def post(self):
+        self.session = Session()
         site = GetSite()
         browser = detect(self.request)
         template_values = {}
+        template_values['site'] = site
         template_values['system_version'] = SYSTEM_VERSION
         errors = 0
         member = CheckAuth(self)
@@ -316,6 +322,29 @@ class SettingsHandler(webapp.RequestHandler):
             template_values['member_twitter'] = member_twitter
             template_values['member_twitter_error'] = member_twitter_error
             template_values['member_twitter_error_message'] = member_twitter_error_messages[member_twitter_error]
+            # Verification: psn
+            member_psn_error = 0
+            member_psn_error_messages = ['',
+                u'PSN ID 长度不能超过 20 个字符',
+                u'PSN ID 不符合规则'
+            ]
+            member_psn = self.request.get('psn').strip()
+            if (len(member_psn) == 0):
+                member_psn = ''
+            else:
+                if (len(member_psn) > 20):
+                    errors = errors + 1
+                    member_psn_error = 1
+                else:
+                    p = re.compile('^[a-zA-Z0-9\-\_]+$')
+                    if (p.search(member_psn)):
+                        errors = errors
+                    else:
+                        errors = errors + 1
+                        member_psn_error = 2
+            template_values['member_psn'] = member_psn
+            template_values['member_psn_error'] = member_psn_error
+            template_values['member_psn_error_message'] = member_psn_error_messages[member_psn_error]
             # Verification: location
             member_location_error = 0
             member_location_error_messages = ['',
@@ -362,6 +391,19 @@ class SettingsHandler(webapp.RequestHandler):
             template_values['member_bio_error'] = member_bio_error
             template_values['member_bio_error_message'] = member_bio_error_messages[member_bio_error]
             template_values['errors'] = errors
+            # Verification: show_home_top and show_quick_post
+            try:
+                member_show_home_top = int(self.request.get('show_home_top'))
+            except:
+                member_show_home_top = 1
+            try:
+                member_show_quick_post = int(self.request.get('show_quick_post'))
+            except:
+                member_show_quick_post = 0
+            if member_show_home_top not in [0, 1]:
+                member_show_home_top = 1
+            if member_show_quick_post not in [0, 1]:
+                member_show_quick_post = 0
             # Verification: l10n
             member_l10n = self.request.get('l10n').strip()
             supported = GetSupportedLanguages()
@@ -385,14 +427,20 @@ class SettingsHandler(webapp.RequestHandler):
                 member.email = member_email.lower()
                 member.website = member_website
                 member.twitter = member_twitter
+                member.psn = member_psn
                 member.location = member_location
                 member.tagline = member_tagline
                 if member.twitter_oauth == 1:
                     member.twitter_sync = member_twitter_sync
                 member.bio = member_bio
+                member.show_home_top = member_show_home_top
+                member.show_quick_post = member_show_quick_post
                 member.l10n = member_l10n
                 member.put()
                 memcache.delete('Member_' + str(member.num))
+                memcache.delete('Member::' + str(member.username))
+                memcache.delete('Member::' + str(member.username_lower))
+                self.session['message'] = '个人设置成功更新'
                 self.redirect('/settings')
             else:
                 if browser['ios']:
@@ -501,8 +549,17 @@ class SettingsAvatarHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
+            dest = '/settings/avatar'
             timestamp = str(int(time.time()))
-            avatar = self.request.get('avatar')
+            try:
+                avatar = self.request.get('avatar')
+            except:
+                return self.redirect(dest)
+            if avatar is None:
+                return self.redirect(dest)
+            avatar_len = len(avatar)
+            if avatar_len == 0:
+                return self.redirect(dest)
             avatar_73 = images.resize(avatar, 73, 73)
             avatar_48 = images.resize(avatar, 48, 48)
             avatar_24 = images.resize(avatar, 24, 24)
@@ -659,8 +716,8 @@ class MemberUnblockHandler(webapp.RequestHandler):
 
 def main():
     application = webapp.WSGIApplication([
-    ('/member/([a-z0-9A-Z\_]+)', MemberHandler),
-    ('/member/([a-z0-9A-Z\_]+).json', MemberApiHandler),
+    ('/member/([a-z0-9A-Z\_\-]+)', MemberHandler),
+    ('/member/([a-z0-9A-Z\_\-]+).json', MemberApiHandler),
     ('/settings', SettingsHandler),
     ('/settings/password', SettingsPasswordHandler),
     ('/settings/avatar', SettingsAvatarHandler),

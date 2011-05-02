@@ -11,6 +11,7 @@ backstage = '后台'
 signin = '登入'
 signup = '注册'
 signout = '登出'
+planes = '位面'
 
 # Messages shared by forms
 
@@ -36,7 +37,8 @@ existing_member = '已注册用户请 <a href="/signin">登入</a>'
 
 username_empty = '请输入用户名'
 username_too_long = '用户名长度不能超过 32 个字符'
-username_invalid = '用户名只能使用 a-z, A-Z 及 _'
+username_too_short = '用户名长度至少 3 个字符'
+username_invalid = '用户名只能使用 0-9, a-z, A-Z 及 _'
 username_taken = '抱歉，这个用户名已经被注册了'
 
 # Messages on /signout
@@ -71,7 +73,8 @@ just_topic_creator = "只看楼主"
 replies = "回复"
 till = "直到"
 sure_to_delete = "确认删除？"
-no_pointless = '➥ 请尽量避免无要点，无信息量的回复，如“沙发”和“顶”，节约自己和他人的宝贵时间是一种美德。'
+no_pointless = '请认真考虑自己的回复能够如何帮助到别人。这里不欢迎无意义的“顶”，“沙发”，“不懂”。'
+for_good = '<a href="/t/10740" class="node">技术类问题回答指南</a>'
 
 # Messages on /go/
 
@@ -110,6 +113,10 @@ twitter_link_explained = "通过 OAuth 可以安全地绑定你的 Twitter 账�
 personal_records = "个人纪录"
 blocked = "屏蔽"
 updated_every_4_hours = "以上数据大约每 4 小时更新一次"
+show_home_top = "首页头部信息"
+show_quick_post = "快捷发布"
+do_show = "显示"
+do_not_show = "不显示"
 
 # Messages on /member/
 
@@ -119,9 +126,9 @@ recent_participated_topics = '最近参与主题'
 # Messages on /backstage
 
 site_settings = '站点设置'
-site_settings_explained = '站点名，标语，描述及其他更多细节。'
+site_settings_explained = '站点名，标语，描述及谁可以发贴，谁可以回帖。'
 topic_settings = '主题设置'
-topic_settings_explained = '配置主题类型及谁可以创建主题，谁可以回复。'
+topic_settings_explained = '配置主题类型。'
 sections = '区域'
 add_new_section = '添加新区域'
 minisites = '迷你站'
@@ -131,6 +138,7 @@ delete_specified_cached_item = '删除指定的缓存项目'
 delete_specified_cached_item_explained = '你可以在这里输入指定的缓存项目的名字并删除它。'
 mapreduce_explained = 'MapReduce 是一个用于数据整理的超强工具，请谨慎使用。'
 latest_joined = '最新加入会员'
+sure_to_delete_minisite = '确认删除这个 minisite 及其所有内容？'
 
 # Messages on /backstage/site
 
@@ -141,6 +149,7 @@ site_description = '站点描述'
 site_home_categories = '主页分类'
 one_category_per_line = '每行一个'
 site_settings_updated = '站点设置成功更新'
+site_theme = '站点皮肤主题'
 
 # Messages on /backstage/topic
 

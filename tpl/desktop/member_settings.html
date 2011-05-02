@@ -14,14 +14,6 @@
                 <div class="cell">
                     <table cellpadding="5" cellspacing="0" border="0">
                         <tr>
-                            <td align="right"><span class="fade">{{ l10n.total_topics }}</span></td>
-                            <td align="left"><strong>{{ member_stats_topics }}</strong></td>
-                        </tr>
-                        <tr>
-                            <td align="right"><span class="fade">{{ l10n.total_replies }}</span></td>
-                            <td align="left"><strong>{{ member_stats_replies }}</strong></td>
-                        </tr>
-                        <tr>
                             <td align="right"><span class="fade">{{ l10n.blocked }}</span></td>
                             <td align="left"><strong>{{ member_stats_blocks }}</strong></td>
                         </tr>
@@ -54,6 +46,9 @@
         				{% if member_twitter_error %}
         				<li>{{ member_twitter_error_message }}</li>
         				{% endif %}
+        				{% if member_psn_error %}
+        				<li>{{ member_psn_error_message }}</li>
+        				{% endif %}
         				{% if member_location_error %}
         				<li>{{ member_location_error_message }}</li>
         				{% endif %}
@@ -65,7 +60,7 @@
         			{% endif %}
                     <table cellpadding="5" cellspacing="0" border="0">
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td width="120" align="right">
         			            {{ l10n.username }}
         			        </td>
         			        <td width="200" align="left">
@@ -73,7 +68,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			            {{ l10n.email }}
         			        </td>
         			        <td width="200" align="left">
@@ -81,7 +76,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			            {{ l10n.website }}
         			        </td>
         			        <td width="200" align="left">
@@ -89,15 +84,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
-        			            {{ l10n.twitter }}
-        			        </td>
-        			        <td width="200" align="left">
-        			            <input type="text" class="sl" name="twitter" value="{{ member_twitter|escape }}" />
-        			        </td>
-        			    </tr>
-        			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			            {{ l10n.location }}
         			        </td>
         			        <td width="200" align="left">
@@ -105,7 +92,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			            {{ l10n.tagline }}
         			        </td>
         			        <td width="200" align="left">
@@ -113,7 +100,7 @@
         			        </td>
         			    </tr>
                         <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			            {{ l10n.bio }}
         			        </td>
         			        <td width="200" align="left">
@@ -121,16 +108,64 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
+        			            {{ l10n.twitter }}
+        			        </td>
+        			        <td width="200" align="left">
+        			            <input type="text" class="sl" name="twitter" value="{{ member_twitter|escape }}" />
+        			        </td>
+        			    </tr>
+                        <tr>
+        			        <td align="right">
+        			            PSN ID
+        			        </td>
+        			        <td width="200" align="left">
+        			            <input type="text" class="sl" name="psn" value="{{ member_psn|escape }}" />
+        			        </td>
+        			    </tr>
+                        <tr>
+        			        <td align="right">
         			            {{ l10n.language }}
         			        </td>
         			        <td width="200" align="left">
         			            {{ s }}
         			        </td>
         			    </tr>
+        			    <tr>
+        			        <td align="right">
+        			            {{ l10n.show_home_top }}
+        			        </td>
+        			        <td width="200" align="left">
+        			            <select name="show_home_top">
+        			            {% if member_show_home_top %}
+        			            <option value="1" selected="selected">{{ l10n.do_show }}</option>
+        			            <option value="0">{{ l10n.do_not_show }}</option>
+        			            {% else %}
+        			            <option value="1">{{ l10n.do_show }}</option>
+        			            <option value="0" selected="selected">{{ l10n.do_not_show }}</option>
+                                {% endif %}
+        			            </select>
+        			        </td>
+        			    </tr>
+                        <tr>
+        			        <td align="right">
+        			            {{ l10n.show_quick_post }}
+        			        </td>
+        			        <td width="200" align="left">
+        			            <select name="show_quick_post">
+        			            {% if member_show_quick_post %}
+        			            <option value="1" selected="selected">{{ l10n.do_show }}</option>
+        			            <option value="0">{{ l10n.do_not_show }}</option>
+        			            {% else %}
+        			            <option value="1">{{ l10n.do_show }}</option>
+        			            <option value="0" selected="selected">{{ l10n.do_not_show }}</option>
+                                {% endif %}
+        			            </select>
+        			        </td>
+        			    </tr>
         			    {% ifequal member.twitter_oauth 1 %}
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			            <span class="small">Twitter Sync</span>
         			        </td>
         			        <td width="200" align="left">
@@ -143,7 +178,7 @@
         			    </tr>
         			    {% endifequal %}
                         <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			        </td>
         			        <td width="200" align="left">
         			            <input type="submit" value="{{ l10n.save_settings }}" class="super normal button" />
@@ -159,7 +194,7 @@
                 <div class="inner">
         			<table cellpadding="5" cellspacing="0" border="0">
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td width="120" align="right">
         			            {{ l10n.current_avatar }}
         			        </td>
         			        <td align="left">
@@ -168,8 +203,8 @@
 													{{ member|avatar:"mini" }}&nbsp;
         			        </td>
         			    </tr>
-        					<tr>
-        			        <td width="80" align="right">
+        				<tr>
+        			        <td align="right">
 
         			        </td>
         			        <td align="left">
@@ -203,7 +238,7 @@
         			<div class="sep5"></div>
         			<table cellpadding="5" cellspacing="0" border="0">
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td width="120" align="right">
         			            {{ l10n.current_password }}
         			        </td>
         			        <td width="200" align="left">
@@ -211,7 +246,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			            {{ l10n.new_password }}
         			        </td>
         			        <td width="200" align="left">
@@ -219,7 +254,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			        </td>
         			        <td width="200" align="left">
         			            <input type="submit" value="{{ l10n.change_password }}" class="super normal button" />
@@ -236,7 +271,7 @@
                     <table cellpadding="5" cellspacing="0" border="0">
                         {% ifequal member.twitter_oauth 1 %}
                         <tr>
-        			        <td width="80" align="right">
+        			        <td width="120" align="right">
         			            <img src="{{ member.twitter_profile_image_url }}" />
         			        </td>
         			        <td width="200" align="left">
@@ -250,7 +285,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			        </td>
         			        <td width="200" align="left">
         			            <input type="submit" value="Unlink My Twitter Account" class="super normal button" onclick="location.href = '/twitter/unlink'" />
@@ -258,7 +293,7 @@
         			    </tr>
                         {% else %}
                         <tr>
-        			        <td width="80" align="right">
+        			        <td width="120" align="right">
         			            {{ l10n.account_status }}
         			        </td>
         			        <td width="200" align="left">
@@ -266,7 +301,7 @@
         			        </td>
         			    </tr>
         			    <tr>
-        			        <td width="80" align="right">
+        			        <td align="right">
         			        </td>
         			        <td width="200" align="left">
         			            <input type="submit" value="Link My Twitter Account" class="super normal button" onclick="location.href = '/twitter/link'" />

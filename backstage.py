@@ -1,20 +1,25 @@
 #!/usr/bin/env python
 # coding=utf-8
 
+import base64
 import os
 import re
 import time
 import datetime
 import hashlib
 import string
+import StringIO
 import random
+import math
 
 from google.appengine.ext import webapp
 from google.appengine.api import memcache
+from google.appengine.api import images
 from google.appengine.ext import db
 from google.appengine.ext.webapp import util
 from google.appengine.ext.webapp import template
 
+from v2ex.babel import Avatar
 from v2ex.babel import Member
 from v2ex.babel import Counter
 from v2ex.babel import Section
@@ -30,6 +35,8 @@ from v2ex.babel.ext.cookies import Cookies
 from v2ex.babel.ua import *
 from v2ex.babel.da import *
 from v2ex.babel.l10n import *
+
+from v2ex.babel.handlers import BaseHandler
 
 template.register_template_library('v2ex.templatetags.filters')
 
@@ -76,13 +83,15 @@ class BackstageHomeHandler(webapp.RequestHandler):
             memcache.set('reply_total', reply_total, 600)
         template_values['reply_total'] = reply_total
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 q = db.GqlQuery("SELECT * FROM Section ORDER BY nodes DESC")
                 template_values['sections'] = q
                 q2 = db.GqlQuery("SELECT * FROM Member ORDER BY created DESC LIMIT 5")
                 template_values['latest_members'] = q2
                 q3 = db.GqlQuery("SELECT * FROM Minisite ORDER BY created DESC")
                 template_values['minisites'] = q3
+                q4 = db.GqlQuery("SELECT * FROM Node ORDER BY last_modified DESC LIMIT 8")
+                template_values['latest_nodes'] = q4
                 if browser['ios']:
                     path = os.path.join(os.path.dirname(__file__), 'tpl', 'mobile', 'backstage_home.html')
                 else:
@@ -106,7 +115,7 @@ class BackstageNewMinisiteHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):    
+            if (member.level == 0):    
                 path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_new_minisite.html')
                 output = template.render(path, template_values)
                 self.response.out.write(output)
@@ -126,7 +135,7 @@ class BackstageNewMinisiteHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 errors = 0
                 # Verification: name
                 minisite_name_error = 0
@@ -228,7 +237,7 @@ class BackstageMinisiteHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 minisite = GetKindByName('Minisite', minisite_name)
                 if minisite is not False:
                     template_values['minisite'] = minisite
@@ -256,13 +265,14 @@ class BackstageNewPageHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 minisite = GetKindByName('Minisite', minisite_name)
                 if minisite is not False:
                     template_values['minisite'] = minisite
                     template_values['page_title'] = site.title + u' › ' + minisite.title + u' › 添加新页面'
                     template_values['page_content_type'] = 'text/html;charset=utf-8'
                     template_values['page_weight'] = 0
+                    template_values['page_mode'] = 0
                     path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_new_page.html')
                     output = template.render(path, template_values)
                     self.response.out.write(output)
@@ -283,7 +293,7 @@ class BackstageNewPageHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 minisite = GetKindByName('Minisite', minisite_name)
                 if minisite is False:
                     self.redirect('/backstage')
@@ -353,6 +363,13 @@ class BackstageNewPageHandler(webapp.RequestHandler):
                     template_values['page_content'] = page_content
                     template_values['page_content_error'] = page_content_error
                     template_values['page_content_error_message'] = page_content_error_messages[page_content_error]
+                    # Verification: mode
+                    page_mode = 0
+                    page_mode = self.request.get('mode').strip()
+                    if page_mode == '1':
+                        page_mode = 1
+                    else:
+                        page_mode = 0
                     # Verification: content_type
                     page_content_type = self.request.get('content_type').strip()
                     if (len(page_content_type) == 0):
@@ -397,9 +414,17 @@ class BackstageNewPageHandler(webapp.RequestHandler):
                         page.name = page_name
                         page.title = page_t
                         page.content = page_content
-                        page.content_rendered = page_content
+                        if page_mode == 1:
+                            from django.template import Context, Template
+                            t = Template(page_content)
+                            c = Context({"site" : site, "minisite" : page.minisite, "page" : page})
+                            output = t.render(c)
+                            page.content_rendered = output
+                        else:
+                            page.content_rendered = page_content
                         page.content_type = page_content_type
                         page.weight = page_weight
+                        page.mode = page_mode
                         page.minisite = minisite
                         page.put()
                         counter.put()
@@ -418,6 +443,34 @@ class BackstageNewPageHandler(webapp.RequestHandler):
         else:
             self.redirect('/signin')
 
+class BackstageRemoveMinisiteHandler(webapp.RequestHandler):
+    def get(self, minisite_key):
+        member = CheckAuth(self)
+        if member:
+            if member.level == 0:
+                minisite = db.get(db.Key(minisite_key))
+                if minisite:
+                    # Delete all contents
+                    pages = db.GqlQuery("SELECT * FROM Page WHERE minisite = :1", minisite)
+                    for page in pages:
+                        memcache.delete('Page_' + str(page.num))
+                        memcache.delete('Page::' + str(page.name))
+                        memcache.delete(minisite.name + '/' + page.name)
+                        page.delete()
+                    minisite.pages = 0
+                    minisite.put()
+                    # Delete the minisite
+                    memcache.delete('Minisite_' + str(minisite.num))
+                    memcache.delete('Minisite::' + str(minisite.name))
+                    minisite.delete()
+                    self.redirect('/backstage')
+                else:
+                    self.redirect('/backstage')
+            else:
+                self.redirect('/')
+        else:
+            self.redirect('/signin')
+
 class BackstagePageHandler(webapp.RequestHandler):
     def get(self, page_key):
         site = GetSite()
@@ -429,7 +482,7 @@ class BackstagePageHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 page = db.get(db.Key(page_key))
                 if page:
                     minisite = page.minisite
@@ -440,6 +493,7 @@ class BackstagePageHandler(webapp.RequestHandler):
                     template_values['page_t'] = page.title
                     template_values['page_content'] = page.content
                     template_values['page_content_type'] = page.content_type
+                    template_values['page_mode'] = page.mode
                     template_values['page_weight'] = page.weight
                     path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_page.html')
                     output = template.render(path, template_values)
@@ -461,7 +515,7 @@ class BackstagePageHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 page = db.get(db.Key(page_key))
                 if page:
                     minisite = page.minisite
@@ -485,7 +539,7 @@ class BackstagePageHandler(webapp.RequestHandler):
                             page_name_error = 2
                         else:
                             if (re.search('^[a-zA-Z0-9\-\_\.]+$', page_name)):
-                                q = db.GqlQuery('SELECT * FROM Page WHERE name = :1', page_name.lower())
+                                q = db.GqlQuery('SELECT * FROM Page WHERE name = :1 AND minisite = :2', page_name.lower(), page.minisite)
                                 if (q.count() > 0):
                                     if q[0].num != page.num:
                                         errors = errors + 1
@@ -530,6 +584,13 @@ class BackstagePageHandler(webapp.RequestHandler):
                     template_values['page_content'] = page_content
                     template_values['page_content_error'] = page_content_error
                     template_values['page_content_error_message'] = page_content_error_messages[page_content_error]
+                    # Verification: mode
+                    page_mode = 0
+                    page_mode = self.request.get('mode').strip()
+                    if page_mode == '1':
+                        page_mode = 1
+                    else:
+                        page_mode = 0
                     # Verification: content_type
                     page_content_type = self.request.get('content_type').strip()
                     if (len(page_content_type) == 0):
@@ -556,8 +617,16 @@ class BackstagePageHandler(webapp.RequestHandler):
                         page.name = page_name
                         page.title = page_t
                         page.content = page_content
-                        page.content_rendered = page_content
+                        if page.mode == 1:
+                            from django.template import Context, Template
+                            t = Template(page_content)
+                            c = Context({"site" : site, "minisite" : page.minisite, "page" : page})
+                            output = t.render(c)
+                            page.content_rendered = output
+                        else:
+                            page.content_rendered = page_content
                         page.content_type = page_content_type
+                        page.mode = page_mode
                         page.weight = page_weight
                         page.put()
                         memcache.delete('Page_' + str(page.num))
@@ -575,6 +644,26 @@ class BackstagePageHandler(webapp.RequestHandler):
         else:
             self.redirect('/signin')
     
+class BackstageRemovePageHandler(webapp.RequestHandler):
+    def get(self, page_key):
+        member = CheckAuth(self)
+        if member:
+            if member.level == 0:
+                page = db.get(db.Key(page_key))
+                if page:
+                    memcache.delete('Page_' + str(page.num))
+                    memcache.delete('Page::' + str(page.name))
+                    memcache.delete(page.minisite.name + '/' + page.name)
+                    minisite = page.minisite
+                    page.delete()
+                    minisite.pages = minisite.pages - 1
+                    minisite.put()
+                    self.redirect('/backstage/minisite/' + minisite.name)
+            else:
+                self.redirect('/')
+        else:
+            self.redirect('/signin')
+
 class BackstageNewSectionHandler(webapp.RequestHandler):
     def get(self):
         site = GetSite()
@@ -586,7 +675,7 @@ class BackstageNewSectionHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):    
+            if (member.level == 0):    
                 path = os.path.join(os.path.dirname(__file__), 'tpl', 'mobile', 'backstage_new_section.html')
                 output = template.render(path, template_values)
                 self.response.out.write(output)
@@ -605,7 +694,7 @@ class BackstageNewSectionHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 errors = 0
                 # Verification: name
                 section_name_error = 0
@@ -707,7 +796,7 @@ class BackstageSectionHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 template_values['member'] = member
                 q = db.GqlQuery("SELECT * FROM Section WHERE name = :1", section_name)
                 section = False
@@ -734,6 +823,8 @@ class BackstageSectionHandler(webapp.RequestHandler):
                     section.nodes = q.count()
                     section.put()
                     template_values['section'] = section
+                    q2 = db.GqlQuery("SELECT * FROM Node WHERE section_num = :1 ORDER BY last_modified DESC LIMIT 10", section.num)
+                    template_values['recent_modified'] = q2
                 else:
                     template_values['nodes'] = False
                 if browser['ios']:
@@ -758,7 +849,7 @@ class BackstageSectionHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if member:
-            if member.num == 1:
+            if member.level == 0:
                 template_values['member'] = member
                 section = GetKindByName('Section', section_name)
                 if section is not False:
@@ -884,7 +975,7 @@ class BackstageNewNodeHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 template_values['member'] = CheckAuth(self)
                 q = db.GqlQuery("SELECT * FROM Section WHERE name = :1", section_name)
                 if (q.count() == 1):
@@ -908,7 +999,7 @@ class BackstageNewNodeHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):        
+            if (member.level == 0):        
                 template_values['member'] = member
                 section = False
                 q = db.GqlQuery("SELECT * FROM Section WHERE name = :1", section_name)
@@ -997,7 +1088,9 @@ class BackstageNewNodeHandler(webapp.RequestHandler):
                     node.title_alternative = node_title_alternative
                     node.put()
                     counter.put()
-                    self.redirect('/backstage/section/' + section.name)
+                    memcache.delete('index_categories')
+                    memcache.delete('home_nodes_new')
+                    self.redirect('/backstage/node/' + node.name)
                 else:    
                     path = os.path.join(os.path.dirname(__file__), 'tpl', 'mobile', 'backstage_new_node.html')
                     output = template.render(path, template_values)
@@ -1019,13 +1112,14 @@ class BackstageNodeHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 template_values['member'] = member
                 q = db.GqlQuery("SELECT * FROM Node WHERE name = :1", node_name)
                 if (q.count() == 1):
-                    template_values['node'] = q[0]
-                    template_values['node_name'] = q[0].name
-                    template_values['node_title'] = q[0].title
+                    node = q[0]
+                    template_values['node'] = node
+                    template_values['node_name'] = node.name
+                    template_values['node_title'] = node.title
                     template_values['node_title_alternative'] = q[0].title_alternative
                     if q[0].category is None:
                         template_values['node_category'] = ''
@@ -1043,14 +1137,17 @@ class BackstageNodeHandler(webapp.RequestHandler):
                         template_values['node_sidebar'] = ''
                     else:
                         template_values['node_sidebar'] = q[0].sidebar
+                    if q[0].sidebar_ads is None:
+                        template_values['node_sidebar_ads'] = ''
+                    else:
+                        template_values['node_sidebar_ads'] = q[0].sidebar_ads
                     template_values['node_topics'] = q[0].topics
                 else:
                     template_values['node'] = False
-                q2 = db.GqlQuery("SELECT * FROM Section WHERE num = :1", q[0].section_num)
-                if (q2.count() == 1):
-                    template_values['section'] = q2[0]
-                else:
-                    template_values['section'] = False
+                section = GetKindByNum('Section', node.section_num)
+                template_values['section'] = section
+                if section is not False:
+                    template_values['page_title'] = site.title + u' › ' + l10n.backstage.decode('utf-8') + u' › ' + section.title + u' › ' + node.title
                 if browser['ios']:
                     path = os.path.join(os.path.dirname(__file__), 'tpl', 'mobile', 'backstage_node.html')
                 else:
@@ -1072,7 +1169,7 @@ class BackstageNodeHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if (member):
-            if (member.num == 1):        
+            if (member.level == 0):        
                 template_values['member'] = member
                 node = False
                 q = db.GqlQuery("SELECT * FROM Node WHERE name = :1", node_name)
@@ -1098,15 +1195,22 @@ class BackstageNodeHandler(webapp.RequestHandler):
                         template_values['node_sidebar'] = ''
                     else:
                         template_values['node_sidebar'] = q[0].sidebar
+                    if q[0].sidebar_ads is None:
+                        template_values['node_sidebar_ads'] = ''
+                    else:
+                        template_values['node_sidebar_ads'] = q[0].sidebar_ads
                     template_values['node_topics'] = q[0].topics
                 else:
                     template_values['node'] = False
                 section = False
                 q2 = db.GqlQuery("SELECT * FROM Section WHERE num = :1", q[0].section_num)
                 if (q2.count() == 1):
+                    section = q2[0]
                     template_values['section'] = q2[0]
                 else:
                     template_values['section'] = False
+                if section is not False:
+                    template_values['page_title'] = site.title + u' › ' + l10n.backstage.decode('utf-8') + u' › ' + section.title + u' › ' + node.title
                 errors = 0
                 # Verification: name
                 node_name_error = 0
@@ -1181,6 +1285,9 @@ class BackstageNodeHandler(webapp.RequestHandler):
                 # Verification: node_sidebar
                 node_sidebar = self.request.get('sidebar').strip()
                 template_values['node_sidebar'] = node_sidebar
+                # Verification: node_sidebar_ads
+                node_sidebar_ads = self.request.get('sidebar_ads').strip()
+                template_values['node_sidebar_ads'] = node_sidebar_ads
                 template_values['errors'] = errors
                 if (errors == 0):
                     node.name = node_name
@@ -1190,10 +1297,13 @@ class BackstageNodeHandler(webapp.RequestHandler):
                     node.header = node_header
                     node.footer = node_footer
                     node.sidebar = node_sidebar
+                    node.sidebar_ads = node_sidebar_ads
                     node.put()
                     memcache.delete('Node_' + str(node.num))
                     memcache.delete('Node::' + node.name)
-                    self.redirect('/backstage/node/' + node.name)
+                    memcache.delete('index_categories')
+                    memcache.delete('home_nodes_new')
+                    self.redirect('/backstage/section/' + section.name)
                 else:    
                     path = os.path.join(os.path.dirname(__file__), 'tpl', 'mobile', 'backstage_node.html')
                     output = template.render(path, template_values)
@@ -1204,11 +1314,146 @@ class BackstageNodeHandler(webapp.RequestHandler):
             self.redirect('/signin')
 
 
+class BackstageNodeAvatarHandler(BaseHandler):
+    def get(self, node_name):
+        self.redirect('/backstage/node/' + node_name)
+    
+    def post(self, node_name):
+        if self.member:
+            if self.member.level == 0:
+                node = GetKindByName('Node', node_name)
+                if node is None:
+                    return self.redirect('/backstage')
+                dest = '/backstage/node/' + node.name
+                timestamp = str(int(time.time()))
+                try:
+                    avatar = self.request.get('avatar')
+                except:
+                    return self.redirect(dest)
+                if avatar is None:
+                    return self.redirect(dest)
+                avatar_len = len(avatar)
+                if avatar_len == 0:
+                    return self.redirect(dest)
+                avatar_73 = images.resize(avatar, 73, 73)
+                avatar_48 = images.resize(avatar, 48, 48)
+                avatar_24 = images.resize(avatar, 24, 24)
+                # Large 73x73
+                q1 = db.GqlQuery("SELECT * FROM Avatar WHERE name = :1", 'node_' + str(node.num) + '_large')
+                if (q1.count() == 1):
+                    avatar_large = q1[0]
+                    avatar_large.content = db.Blob(avatar_73)
+                    avatar_large.put()
+                else:
+                    qc1 = db.GqlQuery("SELECT * FROM Counter WHERE name = :1", 'avatar.max')
+                    if (qc1.count() == 1):
+                        counter1 = qc1[0]
+                        counter1.value = counter1.value + 1
+                    else:
+                        counter1 = Counter()
+                        counter1.name = 'avatar.max'
+                        counter1.value = 1
+                    counter1.put()
+                    avatar_large = Avatar()
+                    avatar_large.name = 'node_' + str(node.num) + '_large'
+                    avatar_large.content = db.Blob(avatar_73)
+                    avatar_large.num = counter1.value
+                    avatar_large.put()
+                node.avatar_large_url = '/navatar/' + str(node.num) + '/large?r=' + timestamp
+                node.put()
+                # Normal 48x48
+                q2 = db.GqlQuery("SELECT * FROM Avatar WHERE name = :1", 'node_' + str(node.num) + '_normal')
+                if (q2.count() == 1):
+                    avatar_normal = q2[0]
+                    avatar_normal.content = db.Blob(avatar_48)
+                    avatar_normal.put()
+                else:
+                    qc2 = db.GqlQuery("SELECT * FROM Counter WHERE name = :1", 'avatar.max')
+                    if (qc2.count() == 1):
+                        counter2 = qc2[0]
+                        counter2.value = counter2.value + 1
+                    else:
+                        counter2 = Counter()
+                        counter2.name = 'avatar.max'
+                        counter2.value = 1
+                    counter2.put()
+                    avatar_normal = Avatar()
+                    avatar_normal.name = 'node_' + str(node.num) + '_normal'
+                    avatar_normal.content = db.Blob(avatar_48)
+                    avatar_normal.num = counter2.value
+                    avatar_normal.put()
+                node.avatar_normal_url = '/navatar/' + str(node.num) + '/normal?r=' + timestamp
+                node.put() 
+                # Mini 24x24
+                q3 = db.GqlQuery("SELECT * FROM Avatar WHERE name = :1", 'node_' + str(node.num) + '_mini')
+                if (q3.count() == 1):
+                    avatar_mini = q3[0]
+                    avatar_mini.content = db.Blob(avatar_24)
+                    avatar_mini.put()
+                else:
+                    qc3 = db.GqlQuery("SELECT * FROM Counter WHERE name = :1", 'avatar.max')
+                    if (qc3.count() == 1):
+                        counter3 = qc3[0]
+                        counter3.value = counter3.value + 1
+                    else:
+                        counter3 = Counter()
+                        counter3.name = 'avatar.max'
+                        counter3.value = 1
+                    counter3.put()
+                    avatar_mini = Avatar()
+                    avatar_mini.name = 'node_' + str(node.num) + '_mini'
+                    avatar_mini.content = db.Blob(avatar_24)
+                    avatar_mini.num = counter3.value
+                    avatar_mini.put()
+                node.avatar_mini_url = '/navatar/' + str(node.num) + '/mini?r=' + timestamp
+                node.put()
+                # Upload to MobileMe
+                use_this = False
+                if config.mobileme_enabled and use_this:
+                    headers = {'Authorization' : 'Basic ' + base64.b64encode(config.mobileme_username + ':' + config.mobileme_password)}
+                    host = 'idisk.me.com'
+                    # Sharding
+                    timestamp = str(int(time.time()))
+                    shard = node.num % 31
+                    root = '/' + config.mobileme_username + '/Web/Sites/v2ex/navatars/' + str(shard)
+                    root_mini = root + '/mini'
+                    root_normal = root + '/normal'
+                    root_large = root + '/large'
+                    h = httplib.HTTPConnection(host)
+                    # Mini
+                    h.request('PUT', root_mini + '/' + str(node.num) + '.png', str(avatar_24), headers)
+                    response = h.getresponse()
+                    if response.status == 201 or response.status == 204:
+                        node.avatar_mini_url = 'http://web.me.com/' + config.mobileme_username + '/v2ex/navatars/' + str(shard) + '/mini/' + str(node.num) + '.png?r=' + timestamp
+                    # Normal
+                    h.request('PUT', root_normal + '/' + str(node.num) + '.png', str(avatar_48), headers)
+                    response = h.getresponse()
+                    if response.status == 201 or response.status == 204:
+                        node.avatar_normal_url = 'http://web.me.com/' + config.mobileme_username + '/v2ex/navatars/' + str(shard) + '/normal/' + str(node.num) + '.png?r=' + timestamp
+                    # Large
+                    h.request('PUT', root_large + '/' + str(node.num) + '.png', str(avatar_73), headers)
+                    response = h.getresponse()
+                    if response.status == 201 or response.status == 204:
+                        node.avatar_large_url = 'http://web.me.com/' + config.mobileme_username + '/v2ex/navatars/' + str(shard) + '/large/' + str(node.num) + '.png?r=' + timestamp
+                    node.put()
+                memcache.set('Node_' + str(node.num), node, 86400 * 365)
+                memcache.set('Node::' + node.name, node, 86400 * 365)
+                memcache.delete('Avatar::node_' + str(node.num) + '_large')
+                memcache.delete('Avatar::node_' + str(node.num) + '_normal')
+                memcache.delete('Avatar::node_' + str(node.num) + '_mini')
+                #self.session['message'] = '新节点头像设置成功'
+                self.redirect(dest)
+            else:
+                self.redirect('/')
+        else:
+            self.redirect('/signin')
+        
+
 class BackstageRemoveReplyHandler(webapp.RequestHandler):
     def get(self, reply_key):
         member = CheckAuth(self)
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 reply = db.get(db.Key(reply_key))
                 if reply:
                     topic = reply.topic
@@ -1218,16 +1463,17 @@ class BackstageRemoveReplyHandler(webapp.RequestHandler):
                     if (topic.replies == 0):
                         topic.last_reply_by = None
                     topic.put()
+                    pages = 1
                     memcache.delete('Topic_' + str(topic.num))
                     memcache.delete('topic_' + str(topic.num) + '_replies_desc_compressed')
                     memcache.delete('topic_' + str(topic.num) + '_replies_asc_compressed')
                     memcache.delete('topic_' + str(topic.num) + '_replies_filtered_compressed')
-                    memcache.delete('topic_' + str(topic.num) + '_replies_desc_rendered')
-                    memcache.delete('topic_' + str(topic.num) + '_replies_asc_rendered')
-                    memcache.delete('topic_' + str(topic.num) + '_replies_filtered_rendered')
-                    memcache.delete('topic_' + str(topic.num) + '_replies_desc_rendered_mobile')
-                    memcache.delete('topic_' + str(topic.num) + '_replies_asc_rendered_mobile')
-                    memcache.delete('topic_' + str(topic.num) + '_replies_filtered_rendered_mobile')
+                    memcache.delete('topic_' + str(topic.num) + '_replies_desc_rendered_desktop_' + str(pages))
+                    memcache.delete('topic_' + str(topic.num) + '_replies_asc_rendered_desktop_' + str(pages))
+                    memcache.delete('topic_' + str(topic.num) + '_replies_filtered_rendered_desktop_' + str(pages))
+                    memcache.delete('topic_' + str(topic.num) + '_replies_desc_rendered_ios_' + str(pages))
+                    memcache.delete('topic_' + str(topic.num) + '_replies_asc_rendered_ios_' + str(pages))
+                    memcache.delete('topic_' + str(topic.num) + '_replies_filtered_rendered_ios_' + str(pages))
                     self.redirect('/t/' + str(topic.num))
                 else:
                     self.redirect('/')
@@ -1240,7 +1486,7 @@ class BackstageTidyReplyHandler(webapp.RequestHandler):
     def get(self, reply_num):
         member = CheckAuth(self)
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 q = db.GqlQuery("SELECT * FROM Reply WHERE num = :1", int(reply_num))
                 if (q.count() == 1):
                     reply = q[0]
@@ -1277,7 +1523,7 @@ class BackstageTidyTopicHandler(webapp.RequestHandler):
     def get(self, topic_num):
         member = CheckAuth(self)
         if (member):
-            if (member.num == 1):
+            if (member.level == 0):
                 q = db.GqlQuery("SELECT * FROM Topic WHERE num = :1", int(topic_num))
                 if (q.count() == 1):
                     topic = q[0]
@@ -1301,7 +1547,7 @@ class BackstageDeactivateUserHandler(webapp.RequestHandler):
     def get(self, key):
         member = CheckAuth(self)
         if member:
-            if member.num == 1:
+            if member.level == 0:
                 one = db.get(db.Key(key))
                 if one:
                     if one.num != 1:
@@ -1309,6 +1555,8 @@ class BackstageDeactivateUserHandler(webapp.RequestHandler):
                         one.deactivated = int(time.time())
                         one.password = hashlib.sha1(str(time.time())).hexdigest()
                         one.auth = hashlib.sha1(str(one.num) + ':' + one.password).hexdigest()
+                        one.newbie = 1
+                        one.noob = 1
                         one.put()
                         memcache.delete('Member_' + str(one.num))
                         return self.redirect('/member/' + one.username)
@@ -1316,7 +1564,115 @@ class BackstageDeactivateUserHandler(webapp.RequestHandler):
 
 class BackstageMoveTopicHandler(webapp.RequestHandler):
     def get(self, key):
+        template_values = {}
+        site = GetSite()
         member = CheckAuth(self)
+        l10n = GetMessages(self, member, site)
+        template_values['l10n'] = l10n
+        topic = db.get(db.Key(key))
+        can_move = False
+        ttl = 0
+        if member:
+            if member.level == 0:
+                can_move = True
+            if topic:
+                if topic.member_num == member.num:
+                    now = datetime.datetime.now()
+                    ttl = 300 - int((now - topic.created).seconds)
+                    if ttl > 0:
+                        can_move = True
+                        template_values['ttl'] = ttl
+        template_values['can_move'] = can_move
+        if member:
+            template_values['member'] = member
+            if can_move:
+                template_values['page_title'] = site.title + u' › 移动主题'
+                template_values['site'] = site
+                if topic is not None:
+                    node = topic.node
+                    template_values['topic'] = topic
+                    template_values['node'] = node
+                    template_values['system_version'] = SYSTEM_VERSION
+                    themes = os.listdir(os.path.join(os.path.dirname(__file__), 'tpl', 'themes'))
+                    template_values['themes'] = themes
+                    path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_move_topic.html')
+                    output = template.render(path, template_values)
+                    self.response.out.write(output)
+                else:
+                    self.redirect('/')
+            else:
+                self.redirect('/')
+        else:
+            self.redirect('/signin')
+    
+    def post(self, key):
+        template_values = {}
+        site = GetSite()
+        member = CheckAuth(self)
+        l10n = GetMessages(self, member, site)
+        template_values['l10n'] = l10n
+        topic = db.get(db.Key(key))
+        can_move = False
+        ttl = 0
+        if member:
+            if member.level == 0:
+                can_move = True
+            if topic:
+                if topic.member_num == member.num:
+                    now = datetime.datetime.now()
+                    ttl = 300 - int((now - topic.created).seconds)
+                    if ttl > 0:
+                        can_move = True
+                        template_values['ttl'] = ttl
+        template_values['can_move'] = can_move
+        if member:
+            template_values['member'] = member
+            if can_move:
+                template_values['page_title'] = site.title + u' › 移动主题'
+                template_values['site'] = site
+                if topic is not None:
+                    errors = 0
+                    node = topic.node
+                    template_values['topic'] = topic
+                    template_values['node'] = node
+                    template_values['system_version'] = SYSTEM_VERSION
+                    destination = self.request.get('destination')
+                    if destination is not None:
+                        node_new = GetKindByName('Node', destination)
+                        if node_new is not False:
+                            node_new = db.get(node_new.key())
+                            node_old = topic.node
+                            node_old.topics = node_old.topics - 1
+                            node_old.put()
+                            node_new.topics = node_new.topics + 1
+                            node_new.put()
+                            topic.node = node_new
+                            topic.node_num = node_new.num
+                            topic.node_name = node_new.name
+                            topic.node_title = node_new.title
+                            topic.put()
+                            memcache.delete('Topic_' + str(topic.num))
+                            memcache.delete('Node_' + str(node_old.num))
+                            memcache.delete('Node_' + str(node_new.num))
+                            memcache.delete('Node::' + str(node_old.name))
+                            memcache.delete('Node::' + str(node_new.name))
+                            self.redirect('/t/' + str(topic.num))
+                        else:
+                            errors = errors + 1
+                    else:
+                        errors = errors + 1
+                    if errors > 0:
+                        themes = os.listdir(os.path.join(os.path.dirname(__file__), 'tpl', 'themes'))
+                        template_values['themes'] = themes
+                        path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_move_topic.html')
+                        output = template.render(path, template_values)
+                        self.response.out.write(output)
+                else:
+                    self.redirect('/')
+            else:
+                self.redirect('/')
+        else:
+            self.redirect('/signin')
         
 class BackstageSiteHandler(webapp.RequestHandler):
     def get(self):
@@ -1326,7 +1682,7 @@ class BackstageSiteHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if member:
-            if member.num == 1:
+            if member.level == 0:
                 template_values['page_title'] = site.title + u' › 站点设置'
                 template_values['site'] = site
                 template_values['site_title'] = site.title
@@ -1341,10 +1697,36 @@ class BackstageSiteHandler(webapp.RequestHandler):
                     template_values['site_analytics'] = site.analytics
                 else:
                     template_values['site_analytics'] = ''
+                if site.topic_view_level is not None:
+                    template_values['site_topic_view_level'] = site.topic_view_level
+                else:
+                    template_values['site_topic_view_level'] = -1
+                if site.topic_create_level is not None:
+                    template_values['site_topic_create_level'] = site.topic_create_level
+                else:
+                    template_values['site_topic_create_level'] = 1000
+                if site.topic_reply_level is not None:
+                    template_values['site_topic_reply_level'] = site.topic_reply_level
+                else:
+                    template_values['site_topic_reply_level'] = 1000
+                if site.meta is not None:
+                    template_values['site_meta'] = site.meta
+                else:
+                    template_values['site_meta'] = ''
+                if site.home_top is not None:
+                    template_values['site_home_top'] = site.home_top
+                else:
+                    template_values['site_home_top'] = ''
+                if site.theme is not None:
+                    template_values['site_theme'] = site.theme
+                else:
+                    template_values['site_theme'] = 'default'
                 s = GetLanguageSelect(site.l10n)
                 template_values['s'] = s
                 template_values['member'] = member
                 template_values['system_version'] = SYSTEM_VERSION
+                themes = os.listdir(os.path.join(os.path.dirname(__file__), 'tpl', 'themes'))
+                template_values['themes'] = themes
                 path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_site.html')
                 output = template.render(path, template_values)
                 self.response.out.write(output)
@@ -1358,7 +1740,7 @@ class BackstageSiteHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if member:
-            if member.num == 1:
+            if member.level == 0:
                 template_values['page_title'] = site.title + u' › 站点设置'
                 template_values['site'] = site
                 template_values['member'] = member
@@ -1476,7 +1858,51 @@ class BackstageSiteHandler(webapp.RequestHandler):
                 template_values['site_home_categories'] = site_home_categories
                 template_values['site_home_categories_error'] = site_home_categories_error
                 template_values['site_home_categories_error_message'] = site_home_categories_error_messages[site_home_categories_error]
+                # Verification: topic_view_level (default=-1)
+                site_topic_view_level = self.request.get('topic_view_level')
+                try:
+                    site_topic_view_level = int(site_topic_view_level)
+                    if site_topic_view_level < -1:
+                        site_topic_view_level = -1
+                except:
+                    site_topic_view_level = -1
+                template_values['site_topic_view_level'] = site_topic_view_level
+                # Verification: topic_create_level (default=1000)
+                site_topic_create_level = self.request.get('topic_create_level')
+                try:
+                    site_topic_create_level = int(site_topic_create_level)
+                    if site_topic_create_level < -1:
+                        site_topic_create_level = 1000
+                except:
+                    site_topic_create_level = 1000
+                template_values['site_topic_create_level'] = site_topic_create_level
+                # Verification: topic_reply_level (default=1000)
+                site_topic_reply_level = self.request.get('topic_reply_level')
+                try:
+                    site_topic_reply_level = int(site_topic_reply_level)
+                    if site_topic_reply_level < -1:
+                        site_topic_reply_level = 1000
+                except:
+                    site_topic_reply_level = 1000
+                template_values['site_topic_reply_level'] = site_topic_reply_level
+                # Verification: meta
+                site_meta = self.request.get('meta')
+                template_values['site_meta'] = site_meta
+                # Verification: home_top
+                site_home_top = self.request.get('home_top')
+                template_values['site_home_top'] = site_home_top
+                # Verification: theme
+                site_theme = self.request.get('theme')
+                themes = os.listdir(os.path.join(os.path.dirname(__file__), 'tpl', 'themes'))
+                template_values['themes'] = themes
+                if site_theme in themes:
+                    template_values['site_theme'] = site_theme
+                else:
+                    site_theme = 'default'
+                    template_values['site_theme'] = site_theme
+
                 template_values['errors'] = errors
+                
                 if errors == 0:
                     site.title = site_title
                     site.slogan = site_slogan
@@ -1487,6 +1913,12 @@ class BackstageSiteHandler(webapp.RequestHandler):
                     if site_analytics != '':
                         site.analytics = site_analytics
                     site.l10n = site_l10n
+                    site.topic_view_level = site_topic_view_level
+                    site.topic_create_level = site_topic_create_level
+                    site.topic_reply_level = site_topic_reply_level
+                    site.meta = site_meta
+                    site.home_top = site_home_top
+                    site.theme = site_theme
                     site.put()
                     memcache.delete('index_categories')
                     template_values['message'] = l10n.site_settings_updated;
@@ -1506,7 +1938,7 @@ class BackstageTopicHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if member:
-            if member.num == 1:
+            if member.level == 0:
                 template_values['page_title'] = site.title + u' › ' + l10n.backstage.decode('utf-8') + u' › ' + l10n.topic_settings.decode('utf-8')
                 template_values['site'] = site
                 template_values['site_use_topic_types'] = site.use_topic_types
@@ -1534,8 +1966,8 @@ class BackstageTopicHandler(webapp.RequestHandler):
         l10n = GetMessages(self, member, site)
         template_values['l10n'] = l10n
         if member:
-            if member.num == 1:
-                template_values['page_title'] = site.title + u' › ' + l10n.backstage + u' › ' + l10n.topic_settings
+            if member.level == 0:
+                template_values['page_title'] = site.title + u' › ' + l10n.backstage.decode('utf-8') + u' › ' + l10n.topic_settings.decode('utf-8')
                 template_values['site'] = site
                 template_values['site_use_topic_types'] = site.use_topic_types
                 if site.topic_types is None:
@@ -1583,23 +2015,262 @@ class BackstageRemoveMemcacheHandler(webapp.RequestHandler):
     def post(self):
         member = CheckAuth(self)
         if member:
-            if member.num == 1:
+            if member.level == 0:
                 mc = self.request.get('mc')
                 if mc is not None:
                     memcache.delete(mc)
         self.redirect('/backstage')
+
+
+class BackstageMemberHandler(webapp.RequestHandler):
+    def get(self, member_username):
+        template_values = {}
+        site = GetSite()
+        member = CheckAuth(self)
+        l10n = GetMessages(self, member, site)
+        template_values['l10n'] = l10n
+        if member:
+            if member.level == 0:
+                member_username_lower = member_username.lower()
+                q = db.GqlQuery("SELECT * FROM Member WHERE username_lower = :1", member_username_lower)
+                if (q.count() == 1):
+                    one = q[0]
+                    template_values['one'] = one
+                    errors = 0
+                    template_values['one_username'] = one.username
+                    template_values['one_email'] = one.email
+                    if one.avatar_large_url is None:
+                        template_values['one_avatar_large_url'] = ''
+                    else:
+                        template_values['one_avatar_large_url'] = one.avatar_large_url
+                    if one.avatar_normal_url is None:
+                        template_values['one_avatar_normal_url'] = ''
+                    else:
+                        template_values['one_avatar_normal_url'] = one.avatar_normal_url
+                    if one.avatar_mini_url is None:
+                        template_values['one_avatar_mini_url'] = ''
+                    else:
+                        template_values['one_avatar_mini_url'] = one.avatar_mini_url
+                    if one.bio is None:
+                        template_values['one_bio'] = ''
+                    else:
+                        template_values['one_bio'] = one.bio
+                    template_values['one_level'] = one.level
+                    template_values['page_title'] = site.title + u' › ' + l10n.backstage.decode('utf-8') + u' › ' + one.username
+                    template_values['site'] = site
+                    template_values['member'] = member
+                    template_values['system_version'] = SYSTEM_VERSION
+                    template_values['latest_members'] = db.GqlQuery("SELECT * FROM Member ORDER BY created DESC LIMIT 5")
+                    path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_member.html')
+                    output = template.render(path, template_values)
+                    self.response.out.write(output)
+                else:
+                    self.redirect('/backstage')
+                
+        else:
+            self.redirect('/')
+            
+
+    def post(self, member_username):
+        template_values = {}
+        site = GetSite()
+        member = CheckAuth(self)
+        l10n = GetMessages(self, member, site)
+        template_values['l10n'] = l10n
+        if member:
+            if member.level == 0:
+                member_username_lower = member_username.lower()
+                q = db.GqlQuery("SELECT * FROM Member WHERE username_lower = :1", member_username_lower)
+                if (q.count() == 1):
+                    one = q[0]
+                    template_values['one'] = one
+                    errors = 0
+                    # Verification: username
+                    one_username_error = 0
+                    one_username_error_messages = ['',
+                        l10n.username_empty,
+                        l10n.username_too_long,
+                        l10n.username_too_short,
+                        l10n.username_invalid,
+                        l10n.username_taken]
+                    one_username = self.request.get('username').strip()
+                    if (len(one_username) == 0):
+                        errors = errors + 1
+                        one_username_error = 1
+                    else:
+                        if (len(one_username) > 32):
+                            errors = errors + 1
+                            one_username_error = 2
+                        else:
+                            if (len(one_username) < 3):
+                                errors = errors + 1
+                                one_username_error = 3
+                            else:
+                                if (re.search('^[a-zA-Z0-9\_]+$', one_username)):
+                                    q = db.GqlQuery('SELECT * FROM Member WHERE username_lower = :1 AND num != :2', one_username.lower(), one.num)
+                                    if (q.count() > 0):
+                                        errors = errors + 1
+                                        one_username_error = 5
+                                else:
+                                    errors = errors + 1
+                                    one_username_error = 4
+                    template_values['one_username'] = one_username
+                    template_values['one_username_error'] = one_username_error
+                    template_values['one_username_error_message'] = one_username_error_messages[one_username_error]
+                    # Verification: email
+                    one_email_error = 0
+                    one_email_error_messages = ['',
+                        u'请输入电子邮件地址',
+                        u'电子邮件地址长度不能超过 32 个字符',
+                        u'输入的电子邮件地址不符合规则',
+                        u'这个电子邮件地址已经有人注册过了']
+                    one_email = self.request.get('email').strip()
+                    if (len(one_email) == 0):
+                        errors = errors + 1
+                        one_email_error = 1
+                    else:
+                        if (len(one_email) > 32):
+                            errors = errors + 1
+                            one_email_error = 2
+                        else:
+                            p = re.compile(r"(?:^|\s)[-a-z0-9_.]+@(?:[-a-z0-9]+\.)+[a-z]{2,6}(?:\s|$)", re.IGNORECASE)
+                            if (p.search(one_email)):
+                                q = db.GqlQuery('SELECT * FROM Member WHERE email = :1 AND num != :2', one_email.lower(), one.num)
+                                if (q.count() > 0):
+                                    errors = errors + 1
+                                    one_email_error = 4
+                            else:
+                                errors = errors + 1
+                                one_email_error = 3
+                    template_values['one_email'] = one_email.lower()
+                    template_values['one_email_error'] = one_email_error
+                    template_values['one_email_error_message'] = one_email_error_messages[one_email_error]
+                    # Verification: avatar
+                    one_avatar_large_url = self.request.get('avatar_large_url')
+                    template_values['one_avatar_large_url'] = one_avatar_large_url
+                    one_avatar_normal_url = self.request.get('avatar_normal_url')
+                    template_values['one_avatar_normal_url'] = one_avatar_normal_url
+                    one_avatar_mini_url = self.request.get('avatar_mini_url')
+                    template_values['one_avatar_mini_url'] = one_avatar_mini_url
+                    # Verification: bio
+                    one_bio = self.request.get('bio')
+                    template_values['one_bio'] = one_bio
+                    # Verification: level
+                    one_level = self.request.get('level')
+                    try:
+                        one_level = int(one_level)
+                    except:
+                        if one.num == 1:
+                            one_level = 0
+                        else:
+                            one_level = 1000
+                    template_values['one_level'] = one_level
+                    if errors == 0:
+                        one.username = one_username
+                        one.username_lower = one_username.lower()
+                        one.email = one_email
+                        one.avatar_large_url = one_avatar_large_url
+                        one.avatar_normal_url = one_avatar_normal_url
+                        one.avatar_mini_url = one_avatar_mini_url
+                        one.bio = one_bio
+                        one.level = one_level
+                        one.put()
+                        memcache.delete('Member_' + str(one.num))
+                        memcache.delete('Member::' + one_username.lower())
+                        self.redirect('/backstage')
+                    else:
+                        template_values['page_title'] = site.title + u' › ' + l10n.backstage.decode('utf-8') + u' › ' + one.username
+                        template_values['site'] = site
+                        template_values['member'] = member
+                        template_values['system_version'] = SYSTEM_VERSION
+                        template_values['latest_members'] = db.GqlQuery("SELECT * FROM Member ORDER BY created DESC LIMIT 5")
+                        path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_member.html')
+                        output = template.render(path, template_values)
+                        self.response.out.write(output)
+                else:
+                    self.redirect('/backstage')
+
+        else:
+            self.redirect('/')
+
+class BackstageMembersHandler(webapp.RequestHandler):
+    def get(self):
+        template_values = {}
+        site = GetSite()
+        template_values['site'] = site
+        member = CheckAuth(self)
+        l10n = GetMessages(self, member, site)
+        template_values['l10n'] = l10n
+        if member:
+            if member.level == 0:
+                template_values['member'] = member
+                template_values['page_title'] = site.title + u' › ' + l10n.backstage.decode('utf-8') + u' › 浏览所有会员'
+                member_total = memcache.get('member_total')
+                if member_total is None:
+                    q3 = db.GqlQuery("SELECT * FROM Counter WHERE name = 'member.total'")
+                    if (q3.count() > 0):
+                        member_total = q3[0].value
+                    else:
+                        member_total = 0
+                    memcache.set('member_total', member_total, 600)
+                template_values['member_total'] = member_total
+                page_size = 60
+                pages = 1
+                if member_total > page_size:
+                    if (member_total % page_size) > 0:
+                        pages = int(math.floor(member_total / page_size)) + 1
+                    else:
+                        pages = int(math.floor(member_total / page_size))
+                try:
+                    page_current = int(self.request.get('p'))
+                    if page_current < 1:
+                        page_current = 1
+                    if page_current > pages:
+                        page_current = pages
+                except:
+                    page_current = 1
+                page_start = (page_current - 1) * page_size
+                template_values['pages'] = pages
+                template_values['page_current'] = page_current
+                i = 1
+                ps = []
+                while i <= pages:
+                    ps.append(i)
+                    i = i + 1
+                template_values['ps'] = ps
+                q = db.GqlQuery("SELECT * FROM Member ORDER BY created DESC LIMIT " + str(page_start )+ "," + str(page_size))
+                template_values['members'] = q
+                path = os.path.join(os.path.dirname(__file__), 'tpl', 'desktop', 'backstage_members.html')
+                output = template.render(path, template_values)
+                self.response.out.write(output)
+            else:
+                self.redirect('/')
+        else:
+            self.redirect('/signin')
+
+class BackstageRemoveNotificationHandler(BaseHandler):
+    def get(self, key):
+        o = db.get(db.Key(key))
+        if o and self.member:
+            if type(o).__name__ == 'Notification':
+                if o.for_member_num == self.member.num:
+                    o.delete()
+        self.redirect('/notifications')
 
 def main():
     application = webapp.WSGIApplication([
     ('/backstage', BackstageHomeHandler),
     ('/backstage/new/minisite', BackstageNewMinisiteHandler),
     ('/backstage/minisite/(.*)', BackstageMinisiteHandler),
+    ('/backstage/remove/minisite/(.*)', BackstageRemoveMinisiteHandler),
     ('/backstage/new/page/(.*)', BackstageNewPageHandler),
     ('/backstage/page/(.*)', BackstagePageHandler),
+    ('/backstage/remove/page/(.*)', BackstageRemovePageHandler),
     ('/backstage/new/section', BackstageNewSectionHandler),
     ('/backstage/section/(.*)', BackstageSectionHandler),
     ('/backstage/new/node/(.*)', BackstageNewNodeHandler),
-    ('/backstage/node/(.*)', BackstageNodeHandler),
+    ('/backstage/node/([a-z0-9A-Z]+)', BackstageNodeHandler),
+    ('/backstage/node/([a-z0-9A-Z]+)/avatar', BackstageNodeAvatarHandler),
     ('/backstage/remove/reply/(.*)', BackstageRemoveReplyHandler),
     ('/backstage/tidy/reply/([0-9]+)', BackstageTidyReplyHandler),
     ('/backstage/tidy/topic/([0-9]+)', BackstageTidyTopicHandler),
@@ -1607,7 +2278,10 @@ def main():
     ('/backstage/move/topic/(.*)', BackstageMoveTopicHandler),
     ('/backstage/site', BackstageSiteHandler),
     ('/backstage/topic', BackstageTopicHandler),
-    ('/backstage/remove/mc', BackstageRemoveMemcacheHandler)
+    ('/backstage/remove/mc', BackstageRemoveMemcacheHandler),
+    ('/backstage/member/(.*)', BackstageMemberHandler),
+    ('/backstage/members', BackstageMembersHandler),
+    ('/backstage/remove/notification/(.*)', BackstageRemoveNotificationHandler),
     ],
                                          debug=True)
     util.run_wsgi_app(application)
